@@ -1,0 +1,35 @@
+{
+  "name": "unzer-node-sdk",
+  "version": "0.1.0",
+  "description": "Unofficial Node.js SDK for the Unzer Direct API, modeled on the official Unzer PHP and Java SDKs.",
+  "main": "src/index.js",
+  "types": "types/index.d.ts",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "src",
+    "types",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "test:integration": "node --test test/integration",
+    "lint": "echo \"(optional) add eslint here\" && exit 0"
+  },
+  "keywords": [
+    "unzer",
+    "payment",
+    "payments",
+    "sdk",
+    "heidelpay",
+    "psp"
+  ],
+  "author": "enteco",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/enteco-digitalrealestatemarketing/unzer-node-sdk.git"
+  }
+}
