@@ -186,6 +186,35 @@ test('fetchResourceFromEvent falls back to paymentId', async () => {
   assert.match(calls[0].url, /\/payments\/s-pay-9$/);
 });
 
+test('fetchResourceFromEvent ignores a retrieveUrl on a foreign origin (credential-leak guard)', async () => {
+  const { unzer, calls } = client({ body: { id: 's-pay-9' } });
+  const resource = await unzer.fetchResourceFromEvent({
+    event: 'charge.succeeded',
+    paymentId: 's-pay-9',
+    retrieveUrl: 'https://evil.example.com/steal?payments/s-pay-9',
+  });
+
+  // must never have contacted the attacker host with the Basic-auth header attached
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /^https:\/\/api\.unzer\.com\/v1\/payments\/s-pay-9$/);
+  assert.equal(
+    calls[0].headers.Authorization,
+    'Basic ' + Buffer.from(`${PRIV}:`).toString('base64')
+  );
+  assert.equal(resource.id, 's-pay-9');
+});
+
+test('fetchResourceFromEvent rejects an unparseable retrieveUrl instead of throwing', async () => {
+  const { unzer, calls } = client({ body: { id: 's-pay-9' } });
+  await unzer.fetchResourceFromEvent({
+    event: 'charge.succeeded',
+    paymentId: 's-pay-9',
+    retrieveUrl: 'not-a-valid-url',
+  });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/payments\/s-pay-9$/);
+});
+
 test('maps non-2xx responses to UnzerApiError', async () => {
   const { unzer } = client({
     ok: false,

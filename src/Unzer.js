@@ -302,20 +302,34 @@ class Unzer {
    *
    * Unzer notifications are not signed; the safe pattern is to re-fetch the
    * referenced resource from the API. Accepts the parsed body or a JSON string.
-   * Uses the body's `retrieveUrl` if present, otherwise falls back to
-   * `paymentId`.
+   *
+   * Security: `retrieveUrl` comes from the untrusted webhook payload. Only
+   * followed when its origin matches the configured `baseUrl` — otherwise a
+   * forged payload could point it at an attacker-controlled host and receive
+   * the private-key Basic-auth header (see `HttpClient.buildUrl`, which
+   * passes any absolute URL through unchanged). Falls back to re-fetching by
+   * `paymentId` against the configured API in every other case.
    */
   async fetchResourceFromEvent(event) {
     const body = typeof event === 'string' ? JSON.parse(event) : event || {};
-    if (body.retrieveUrl) {
+    if (body.retrieveUrl && this._isTrustedRetrieveUrl(body.retrieveUrl)) {
       return this.http.get(body.retrieveUrl);
     }
     if (body.paymentId) {
       return this.fetchPayment(body.paymentId);
     }
     throw new Error(
-      'Unzer: webhook event has neither a retrieveUrl nor a paymentId.'
+      'Unzer: webhook event has neither a trusted retrieveUrl nor a paymentId.'
     );
+  }
+
+  /** Whether `retrieveUrl` shares its origin with the configured `baseUrl`. */
+  _isTrustedRetrieveUrl(retrieveUrl) {
+    try {
+      return new URL(retrieveUrl).origin === new URL(this.http.baseUrl).origin;
+    } catch (err) {
+      return false;
+    }
   }
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "unzer-node-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Unofficial Node.js SDK for the Unzer Direct API, modeled on the official Unzer PHP and Java SDKs.",
   "main": "src/index.js",
   "types": "types/index.d.ts",
