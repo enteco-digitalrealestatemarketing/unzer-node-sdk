@@ -26,7 +26,6 @@ class AbstractResource {
   toApiPayload() {
     const out = {};
     for (const [key, value] of Object.entries(this)) {
-      if (key.startsWith('_')) continue;
       if (value === undefined || value === null) continue;
       out[key] = value;
     }

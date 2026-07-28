@@ -80,14 +80,18 @@ The SDK uses HTTP Basic auth as required by Unzer: your **private key**
 const unzer = new Unzer('s-priv-xxxx', {
   baseUrl: 'https://api.unzer.com/v1', // default
   locale: 'de_DE',                     // default en_US -> Accept-Language
+  timeoutMs: 80000,                    // optional; unset -> no timeout
 });
 ```
 
 ## Amounts & currency
 
 Unlike Stripe (which uses the smallest currency unit / cents), the Unzer API
-uses **decimal major units** (e.g. `12.99`). The SDK serializes amounts to
-strings as-is — convert from cents before calling if your system stores cents.
+uses **decimal major units** (e.g. `12.99`). Prefer passing amounts as
+**strings** (`'12.99'`): a `string` is forwarded verbatim, whereas a `number`
+is converted with `String()`, which drops trailing zeros (`59.50` → `'59.5'`)
+and can surface floating-point artifacts (`0.1 + 0.2` → `'0.30000000000000004'`).
+Convert from cents before calling if your system stores cents.
 
 ## API surface → Direct API mapping
 

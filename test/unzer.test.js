@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const Unzer = require('../src');
-const { UnzerApiError, Card } = require('../src');
+const { UnzerApiError, Card, Webhook, Customer, HttpClient } = require('../src');
 const { mockFetch } = require('./helpers');
 
 const PRIV = 's-priv-test1234567890';
@@ -251,4 +251,179 @@ test('maps 2xx body containing errors[] to UnzerApiError', async () => {
     body: { errors: [{ code: 'X', merchantMessage: 'bad' }] },
   });
   await assert.rejects(() => unzer.fetchPayment('s-pay-1'), UnzerApiError);
+});
+
+test('maps a non-2xx non-JSON body to UnzerApiError carrying the raw text', async () => {
+  const { fetchImpl } = mockFetch({ ok: false, status: 502, raw: '<html>Bad Gateway</html>' });
+  const unzer = new Unzer(PRIV, { fetchImpl, baseUrl: 'https://api.unzer.com/v1' });
+  await assert.rejects(
+    () => unzer.fetchPayment('s-pay-1'),
+    (err) => {
+      assert.ok(err instanceof UnzerApiError);
+      assert.equal(err.statusCode, 502);
+      assert.match(err.message, /Bad Gateway/);
+      return true;
+    }
+  );
+});
+
+test('maps a non-2xx JSON body without errors[] to a generic UnzerApiError', async () => {
+  const { unzer } = client({ ok: false, status: 404, body: { id: 's-x' } });
+  await assert.rejects(
+    () => unzer.fetchPayment('s-pay-1'),
+    (err) => {
+      assert.ok(err instanceof UnzerApiError);
+      assert.equal(err.statusCode, 404);
+      assert.match(err.message, /HTTP 404/);
+      return true;
+    }
+  );
+});
+
+test('createPaymentType with a plain object strips apiName and id from the body', async () => {
+  const { unzer, calls } = client({ body: { id: 's-crd-2' } });
+  const res = await unzer.createPaymentType({ apiName: 'card', id: 'strip-me', brand: 'VISA' });
+
+  assert.match(calls[0].url, /\/types\/card$/);
+  assert.equal(calls[0].body.apiName, undefined, 'apiName must not be sent in the body');
+  assert.equal(calls[0].body.id, undefined);
+  assert.equal(calls[0].body.brand, 'VISA');
+  assert.equal(res.id, 's-crd-2');
+});
+
+test('authorize merges a caller-supplied resources object without dropping typeId', async () => {
+  const { unzer, calls } = client({ body: { id: 's-aut-2' } });
+  await unzer.authorize({
+    amount: 10,
+    currency: 'EUR',
+    typeId: 's-crd-1',
+    resources: { customerId: 's-cst-9' },
+  });
+  assert.deepEqual(calls[0].body.resources, {
+    customerId: 's-cst-9',
+    typeId: 's-crd-1',
+  });
+});
+
+test('createWebhooks posts eventList and returns Webhook instances', async () => {
+  const { unzer, calls } = client({
+    body: { events: [{ id: 's-whk-1' }, { id: 's-whk-2' }] },
+  });
+  const hooks = await unzer.createWebhooks('https://e.com/hook', ['charge', 'authorize']);
+
+  assert.deepEqual(calls[0].body, {
+    url: 'https://e.com/hook',
+    eventList: ['charge', 'authorize'],
+  });
+  assert.equal(hooks.length, 2);
+  assert.ok(hooks[0] instanceof Webhook);
+  assert.equal(hooks[1].id, 's-whk-2');
+});
+
+test('createOrUpdateCustomer serializes a Customer instance and drops the client back-reference', async () => {
+  const { unzer, calls } = client({ body: { id: 's-cst-2' } });
+  await unzer.createOrUpdateCustomer(new Customer({ firstname: 'Max', lastname: 'Muster' }));
+
+  assert.equal(calls[0].method, 'POST');
+  assert.match(calls[0].url, /\/customers$/);
+  assert.equal(calls[0].body.firstname, 'Max');
+  assert.equal(calls[0].body._unzer, undefined, 'internal back-reference must not be serialized');
+});
+
+test('Authorization convenience methods call charge and cancel via the owning client', async () => {
+  const { unzer, calls } = client([
+    { body: { id: 's-aut-1', resources: { paymentId: 's-pay-1' } } },
+    { body: { id: 's-chg-1' } },
+    { body: { id: 's-cnl-1' } },
+  ]);
+
+  const auth = await unzer.authorize({ amount: 10, currency: 'EUR', typeId: 's-crd-1' });
+  await auth.charge('5');
+  await auth.cancel();
+
+  assert.match(calls[1].url, /\/payments\/s-pay-1\/charges$/);
+  assert.deepEqual(calls[1].body, { amount: '5' });
+  assert.match(calls[2].url, /\/payments\/s-pay-1\/authorize\/cancels$/);
+  assert.deepEqual(calls[2].body, {});
+});
+
+test('Payment convenience methods capture and reverse via the owning client', async () => {
+  const { unzer, calls } = client([
+    { body: { id: 's-pay-1' } },
+    { body: { id: 's-chg-1' } },
+    { body: { id: 's-cnl-1' } },
+  ]);
+
+  const payment = await unzer.fetchPayment('s-pay-1');
+  await payment.charge('7.50');
+  await payment.cancelAuthorization();
+
+  assert.match(calls[1].url, /\/payments\/s-pay-1\/charges$/);
+  assert.deepEqual(calls[1].body, { amount: '7.50' });
+  assert.match(calls[2].url, /\/payments\/s-pay-1\/authorize\/cancels$/);
+});
+
+test('fetchResourceFromEvent accepts a JSON string body', async () => {
+  const { unzer, calls } = client({ body: { id: 's-pay-9' } });
+  await unzer.fetchResourceFromEvent(
+    JSON.stringify({ event: 'charge', paymentId: 's-pay-9' })
+  );
+  assert.match(calls[0].url, /\/payments\/s-pay-9$/);
+});
+
+test('fetchResourceFromEvent throws when neither retrieveUrl nor paymentId is present', async () => {
+  const { unzer } = client({ body: {} });
+  await assert.rejects(
+    () => unzer.fetchResourceFromEvent({ event: 'charge' }),
+    /neither a trusted retrieveUrl nor a paymentId/
+  );
+});
+
+test('endpoints encode path parameters so a forged paymentId cannot traverse', async () => {
+  const { unzer, calls } = client({ body: { id: 's-pay-1' } });
+  await unzer.fetchPayment('../keypair');
+  // the slash is percent-encoded, so the request stays on the payments path
+  assert.match(calls[0].url, /\/payments\/\.\.%2Fkeypair$/);
+});
+
+test('HttpClient omits the auth header for a foreign-origin absolute URL', async () => {
+  const { fetchImpl, calls } = mockFetch({ body: { ok: true } });
+  const http = new HttpClient(PRIV, { fetchImpl, baseUrl: 'https://api.unzer.com/v1' });
+  await http.get('https://evil.example.com/steal');
+
+  assert.equal(calls[0].url, 'https://evil.example.com/steal');
+  assert.equal(calls[0].headers.Authorization, undefined);
+});
+
+test('HttpClient attaches the auth header for same-origin requests', async () => {
+  const { fetchImpl, calls } = mockFetch({ body: { ok: true } });
+  const http = new HttpClient(PRIV, { fetchImpl, baseUrl: 'https://api.unzer.com/v1' });
+  await http.get('https://api.unzer.com/v1/payments/s-pay-1');
+
+  assert.equal(
+    calls[0].headers.Authorization,
+    'Basic ' + Buffer.from(`${PRIV}:`).toString('base64')
+  );
+});
+
+test('HttpClient.put defaults to an empty JSON body', async () => {
+  const { fetchImpl, calls } = mockFetch({ body: { id: 's-cst-1' } });
+  const http = new HttpClient(PRIV, { fetchImpl, baseUrl: 'https://api.unzer.com/v1' });
+  await http.put('customers/s-cst-1');
+  assert.deepEqual(calls[0].body, {});
+});
+
+test('does not leak the private key or auth header via JSON.stringify', () => {
+  const unzer = new Unzer(PRIV, {
+    fetchImpl: () => {},
+    baseUrl: 'https://api.unzer.com/v1',
+  });
+  const serialized = JSON.stringify(unzer);
+  assert.doesNotMatch(serialized, /s-priv-/);
+  assert.doesNotMatch(serialized, /Basic /);
+  // ...but the header is still readable internally
+  assert.equal(
+    unzer.http.authHeader,
+    'Basic ' + Buffer.from(`${PRIV}:`).toString('base64')
+  );
 });

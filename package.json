@@ -16,7 +16,7 @@
   "scripts": {
     "test": "node --test",
     "test:integration": "node --test test/integration",
-    "lint": "echo \"(optional) add eslint here\" && exit 0"
+    "lint": "node --check src/index.js && node -e \"require('./src')\""
   },
   "keywords": [
     "unzer",
