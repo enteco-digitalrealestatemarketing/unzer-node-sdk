@@ -4,6 +4,8 @@ export interface UnzerOptions {
   baseUrl?: string;
   locale?: string;
   fetchImpl?: typeof fetch;
+  /** Optional per-request timeout in milliseconds. Unset → no timeout. */
+  timeoutMs?: number;
 }
 
 export interface TransactionParams {
@@ -82,6 +84,11 @@ export class Eps extends BasePaymentType {}
 
 export class HttpClient {
   constructor(privateKey: string, options?: UnzerOptions);
+  baseUrl: string;
+  locale: string;
+  timeoutMs?: number;
+  buildUrl(path: string): string;
+  isSameOrigin(url: string): boolean;
   request(method: string, path: string, body?: unknown): Promise<any>;
   get(path: string): Promise<any>;
   post(path: string, body?: unknown): Promise<any>;
@@ -129,6 +136,8 @@ declare const _default: typeof Unzer & {
   Unzer: typeof Unzer;
   HttpClient: typeof HttpClient;
   UnzerApiError: typeof UnzerApiError;
+  AbstractResource: typeof AbstractResource;
+  AbstractTransaction: typeof AbstractTransaction;
   Payment: typeof Payment;
   Authorization: typeof Authorization;
   Charge: typeof Charge;

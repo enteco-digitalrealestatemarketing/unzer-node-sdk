@@ -6,31 +6,36 @@
  *
  * See: https://docs.unzer.com/server-side-integration/direct-api-integration/manage-api-resources/
  */
+// Resource IDs are interpolated into request paths; encode them so an unusual
+// or (for the webhook-supplied paymentId) attacker-influenced value cannot break
+// out of its path segment. Legitimate Unzer IDs (alphanumeric + hyphen) are
+// unchanged by encodeURIComponent.
+const enc = encodeURIComponent;
+
 module.exports = {
   // Collections
   AUTHORIZE: 'payments/authorize',
   CHARGES: 'payments/charges',
-  PAYOUTS: 'payments/payouts',
   CUSTOMERS: 'customers',
   BASKETS: 'baskets',
   METADATA: 'metadata',
   WEBHOOKS: 'webhooks',
-  KEYPAIR: 'keypair',
 
   // Payment / transaction resources
-  payment: (paymentId) => `payments/${paymentId}`,
-  authorization: (paymentId) => `payments/${paymentId}/authorize`,
-  charge: (paymentId, chargeId) => `payments/${paymentId}/charges/${chargeId}`,
-  paymentCharges: (paymentId) => `payments/${paymentId}/charges`,
-  authorizeCancels: (paymentId) => `payments/${paymentId}/authorize/cancels`,
+  payment: (paymentId) => `payments/${enc(paymentId)}`,
+  authorization: (paymentId) => `payments/${enc(paymentId)}/authorize`,
+  charge: (paymentId, chargeId) =>
+    `payments/${enc(paymentId)}/charges/${enc(chargeId)}`,
+  paymentCharges: (paymentId) => `payments/${enc(paymentId)}/charges`,
+  authorizeCancels: (paymentId) => `payments/${enc(paymentId)}/authorize/cancels`,
   chargeCancels: (paymentId, chargeId) =>
-    `payments/${paymentId}/charges/${chargeId}/cancels`,
+    `payments/${enc(paymentId)}/charges/${enc(chargeId)}/cancels`,
 
   // Other resources
-  customer: (id) => `customers/${id}`,
-  basket: (id) => `baskets/${id}`,
-  metadataItem: (id) => `metadata/${id}`,
-  types: (name) => `types/${name}`,
-  type: (id) => `types/${id}`,
-  webhook: (id) => `webhooks/${id}`,
+  customer: (id) => `customers/${enc(id)}`,
+  basket: (id) => `baskets/${enc(id)}`,
+  metadataItem: (id) => `metadata/${enc(id)}`,
+  types: (name) => `types/${enc(name)}`,
+  type: (id) => `types/${enc(id)}`,
+  webhook: (id) => `webhooks/${enc(id)}`,
 };

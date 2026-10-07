@@ -35,7 +35,13 @@ class Unzer {
    * @param {Function} [options.fetchImpl] Custom fetch implementation (for tests).
    */
   constructor(privateKey, options = {}) {
-    this.privateKey = privateKey;
+    // Non-enumerable so JSON.stringify / logging of the client does not leak
+    // the credential; the HttpClient holds its own (also non-enumerable) copy.
+    Object.defineProperty(this, 'privateKey', {
+      value: privateKey,
+      enumerable: false,
+      writable: true,
+    });
     this.http = new HttpClient(privateKey, options);
   }
 
@@ -53,6 +59,7 @@ class Unzer {
       paymentReference,
       card3ds,
       additionalTransactionData,
+      resources: resourcesParam,
       ...rest
     } = params;
 
@@ -67,14 +74,17 @@ class Unzer {
       payload.additionalTransactionData = additionalTransactionData;
     }
 
-    const resources = {};
+    // Start from a caller-supplied `resources` object (if any) so the nested
+    // typeId/customerId/... below extend it instead of being clobbered by the
+    // `rest` spread further down.
+    const resources = { ...resourcesParam };
     if (typeId) resources.typeId = typeId;
     if (customerId) resources.customerId = customerId;
     if (metadataId) resources.metadataId = metadataId;
     if (basketId) resources.basketId = basketId;
-    if (Object.keys(resources).length > 0) payload.resources = resources;
 
     Object.assign(payload, rest);
+    if (Object.keys(resources).length > 0) payload.resources = resources;
     return payload;
   }
 
@@ -251,6 +261,10 @@ class Unzer {
     const payload =
       typeof type.toApiPayload === 'function' ? type.toApiPayload() : { ...type };
     delete payload.id;
+    // `apiName` addresses the endpoint, it is not a request field. Payment-type
+    // instances expose it as a prototype method (already excluded), but a plain
+    // object would otherwise leak it into the body.
+    delete payload.apiName;
     return this.http.post(endpoints.types(apiName), payload);
   }
 
@@ -269,9 +283,17 @@ class Unzer {
     return new Webhook(data, this);
   }
 
-  /** Register multiple events for one URL. POST /webhooks */
+  /**
+   * Register multiple events for one URL. POST /webhooks
+   * Returns `Webhook[]`, consistent with `createWebhook`/`fetchAllWebhooks`.
+   */
   async createWebhooks(url, events) {
-    return this.http.post(endpoints.WEBHOOKS, { url, eventList: events });
+    const data = await this.http.post(endpoints.WEBHOOKS, {
+      url,
+      eventList: events,
+    });
+    const list = (data && data.events) || [];
+    return list.map((w) => new Webhook(w, this));
   }
 
   /** GET /webhooks */
@@ -306,9 +328,14 @@ class Unzer {
    * Security: `retrieveUrl` comes from the untrusted webhook payload. Only
    * followed when its origin matches the configured `baseUrl` — otherwise a
    * forged payload could point it at an attacker-controlled host and receive
-   * the private-key Basic-auth header (see `HttpClient.buildUrl`, which
-   * passes any absolute URL through unchanged). Falls back to re-fetching by
-   * `paymentId` against the configured API in every other case.
+   * the private-key Basic-auth header. This facade-level guard is backed by a
+   * second, independent guard in `HttpClient` (the auth header is only attached
+   * to same-origin requests). Falls back to re-fetching by `paymentId` against
+   * the configured API in every other case.
+   *
+   * Return value: the trusted-`retrieveUrl` path returns the raw resource data
+   * as returned by the API; the `paymentId` fallback returns a {@link Payment}
+   * instance (with its convenience methods). Inspect `.state` etc. either way.
    */
   async fetchResourceFromEvent(event) {
     const body = typeof event === 'string' ? JSON.parse(event) : event || {};
@@ -325,11 +352,7 @@ class Unzer {
 
   /** Whether `retrieveUrl` shares its origin with the configured `baseUrl`. */
   _isTrustedRetrieveUrl(retrieveUrl) {
-    try {
-      return new URL(retrieveUrl).origin === new URL(this.http.baseUrl).origin;
-    } catch (err) {
-      return false;
-    }
+    return this.http.isSameOrigin(retrieveUrl);
   }
 }
 

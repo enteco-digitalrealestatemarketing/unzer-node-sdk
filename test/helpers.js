@@ -5,7 +5,9 @@
  * responses. `responses` may be a single response descriptor or an array
  * consumed in order.
  *
- * Response descriptor: { ok?, status?, body? }
+ * Response descriptor: { ok?, status?, body?, raw? }
+ * `raw` returns a verbatim (possibly non-JSON) response body; it takes
+ * precedence over `body` and is used to exercise the non-JSON error path.
  */
 function mockFetch(responses) {
   const calls = [];
@@ -21,8 +23,10 @@ function mockFetch(responses) {
     return {
       ok: descriptor.ok !== false,
       status: descriptor.status || 200,
-      text: async () =>
-        descriptor.body === undefined ? '' : JSON.stringify(descriptor.body),
+      text: async () => {
+        if (descriptor.raw !== undefined) return descriptor.raw;
+        return descriptor.body === undefined ? '' : JSON.stringify(descriptor.body);
+      },
     };
   };
 

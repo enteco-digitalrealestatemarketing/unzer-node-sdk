@@ -21,12 +21,18 @@ class HttpClient {
       throw new Error('Unzer: a private key (s-priv-...) is required.');
     }
 
-    const { baseUrl = DEFAULT_BASE_URL, locale = 'en_US', fetchImpl } = options;
+    const {
+      baseUrl = DEFAULT_BASE_URL,
+      locale = 'en_US',
+      fetchImpl,
+      timeoutMs,
+    } = options;
 
-    this.privateKey = privateKey;
     this.baseUrl = String(baseUrl).replace(/\/+$/, '');
     this.locale = locale;
     this.fetch = fetchImpl || globalThis.fetch;
+    // Optional per-request timeout (ms). Unset → no timeout (previous behavior).
+    this.timeoutMs = timeoutMs;
 
     if (typeof this.fetch !== 'function') {
       throw new Error(
@@ -34,8 +40,29 @@ class HttpClient {
       );
     }
 
-    this.authHeader =
-      'Basic ' + Buffer.from(`${privateKey}:`).toString('base64');
+    if (!/^https:\/\//i.test(this.baseUrl)) {
+      // The private key travels as the HTTP Basic-auth username, so a non-TLS
+      // baseUrl would send it in cleartext. The default is https; this only
+      // fires on explicit misconfiguration.
+      // eslint-disable-next-line no-console
+      console.warn(
+        'Unzer: baseUrl is not https — the private key would be sent over an unencrypted connection.'
+      );
+    }
+
+    // Keep the credential and the derived header non-enumerable so they are not
+    // exposed by JSON.stringify / console.log / structured error capture that
+    // serializes surrounding object context. Property reads still work.
+    Object.defineProperty(this, 'privateKey', {
+      value: privateKey,
+      enumerable: false,
+      writable: true,
+    });
+    Object.defineProperty(this, 'authHeader', {
+      value: 'Basic ' + Buffer.from(`${privateKey}:`).toString('base64'),
+      enumerable: false,
+      writable: true,
+    });
   }
 
   buildUrl(path) {
@@ -43,21 +70,53 @@ class HttpClient {
     return `${this.baseUrl}/${String(path).replace(/^\/+/, '')}`;
   }
 
+  /** Whether `url` resolves to the same origin as the configured baseUrl. */
+  isSameOrigin(url) {
+    try {
+      return new URL(url).origin === new URL(this.baseUrl).origin;
+    } catch (err) {
+      return false;
+    }
+  }
+
   async request(method, path, body) {
     const url = this.buildUrl(path);
     const headers = {
-      Authorization: this.authHeader,
       Accept: 'application/json',
       'Accept-Language': this.locale,
     };
 
+    // Only attach the private-key credential to same-origin requests. Relative
+    // paths resolve onto baseUrl (same origin); an absolute URL pointing at a
+    // foreign host — e.g. a forged webhook retrieveUrl — never receives it.
+    if (this.isSameOrigin(url)) {
+      headers.Authorization = this.authHeader;
+    }
+
+    // Redirect handling is left at the fetch default ('follow'): fetch drops the
+    // Authorization header on cross-origin redirects, so the credential is not
+    // forwarded to a foreign host.
     const init = { method, headers };
     if (body !== undefined && body !== null) {
       headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
     }
 
-    const res = await this.fetch(url, init);
+    let timer;
+    if (this.timeoutMs) {
+      const controller = new AbortController();
+      init.signal = controller.signal;
+      timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      if (typeof timer.unref === 'function') timer.unref();
+    }
+
+    let res;
+    try {
+      res = await this.fetch(url, init);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+
     const text = await res.text();
 
     let data = {};
