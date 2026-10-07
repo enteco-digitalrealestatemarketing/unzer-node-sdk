@@ -93,9 +93,10 @@ class HttpClient {
       headers.Authorization = this.authHeader;
     }
 
-    // This JSON API does not use HTTP redirects (3DS/redirect URLs come in the
-    // body), so fail closed rather than follow a redirect with credentials.
-    const init = { method, headers, redirect: 'error' };
+    // Redirect handling is left at the fetch default ('follow'): fetch drops the
+    // Authorization header on cross-origin redirects, so the credential is not
+    // forwarded to a foreign host.
+    const init = { method, headers };
     if (body !== undefined && body !== null) {
       headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
